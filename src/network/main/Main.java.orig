@@ -1,0 +1,1401 @@
+package network.main;
+
+import io.Folder;
+import io.Images.InputSample;
+import io.UniqueFile;
+
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.lang.reflect.InvocationTargetException;
+import java.util.LinkedList;
+import java.util.Random;
+
+import layer.CnnDoubleLayer;
+import network.CombisParameterConfigs;
+import network.LayerParameters;
+import network.LayerParameters.NetworkParameters;
+import network.Network;
+import network.NetworkIO;
+import network.NetworkState;
+import network.Static;
+import network.Static.Objective;
+import network.Static.OutputFunctionType;
+import network.Static.Pooling;
+import network.analysis.Analysis;
+import network.analysis.Debug;
+import objective.ChaObjective;
+import objective.ConvAutoEncoder;
+
+import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.StringUtils;
+
+import util.basics.DoubleArray3Dext.Loc;
+import util.math.DifferentiableFunction;
+import data.DataFromNetwork;
+import data.DataSet;
+import data.GenerateData;
+import data.MNIST;
+
+
+
+@SuppressWarnings("unused")
+public class Main {
+
+	public static void mainForJAR(String[] args) {
+
+		System.out.println("Call: main> "+StringUtils.join(args, " "));
+		
+//		Defaults.getStandardDefaults();
+		
+		
+		if (Debug.useWindowQuitExperiment) JFrameExperiment.run();
+		
+		try {
+			if (args.length>0)
+				switch (args[0].toLowerCase()) {
+				case "mainsinglelayer":
+					NetworkIO.path = Folder.newUniqueFolder(NetworkIO.basePath+"\\simpleNetwork");
+					mainSingleLayer();
+					break;
+				case "chaSequential":
+					NetworkIO.path = Folder.newUniqueFolder(NetworkIO.basePath+"\\simpleNetwork");
+					chaSequential();
+					break;
+				case "loadfromfileandconvertdata":
+					loadFromFileAndConvertData();
+					break;
+				case "testsettings":
+					int nRuns = Integer.parseInt(args[2]);
+					switch(args[1].toLowerCase()) {
+					case "comparecha":
+						testSettings(ParameterConfigs.compareCha, nRuns);
+						break;
+					case "fromParams":
+						String netParamsPath = args[3];
+						String layerParamsPath = args[4];
+						NetworkParameters netParams;
+						try {
+							netParams = new NetworkParameters().readFromFile(new File(netParamsPath));
+							LayerParameters layerParams = LayerParameters.readFromFile(new File(layerParamsPath), netParams);
+							testSettings(new CombisParameterConfigs(layerParams), nRuns);
+						} catch (IllegalArgumentException | SecurityException
+								| FileNotFoundException | InstantiationException
+								| IllegalAccessException
+								| InvocationTargetException | NoSuchMethodException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
+						break;
+					default:
+						Debug.out("not implemented "+args[1]);
+					}
+					break;
+					
+				default:
+					Debug.out("not implemented "+args[0]);
+				}
+			else
+				Debug.err("pass arguments!");
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+
+		
+		
+		
+		if (Debug.useWindowQuitExperiment) JFrameExperiment.frame.dispose();
+		System.exit(0);
+	}
+	public static void main(String[] args) {
+		if (Debug.useWindowQuitExperiment) JFrameExperiment.run();
+
+//		continueLearning(args);
+//		twoLayerClassification();
+//		oneLayerClassification();
+//		twoUnifLayersOnwClassificationLayer();
+//		wholeNetworkLayerwiseMNISTsingleClassificationLayer();
+//		
+//		
+//		oneUnifLayerOneClassificationLayerMNIST(args);
+<<<<<<< .mine
+//		oneUnifLayerOneClassificationLayerMNISTfromWholeNetwork(args);
+//		
+=======
+//		oneUnifLayerOneClassificationLayerMNISTfromWholeNetwork(args);
+		
+>>>>>>> .r16
+		convAutoEncoderNetwork(args);
+//		testConvAutoEncoder();
+//		
+//		evaluateNetwork("D:\\Thesis test results\\thesisSimple\\imageOutput\\simpleNetwork0\\fully_learned_0");
+//		evaluateNetwork("D:\\Thesis test results\\thesisSimple\\imageOutput\\simpleNetwork0\\layerClass_0");
+//		
+		trainSecondLayerClassificationLayer(args);
+//		
+//		evaluateNetworkOnMNIST(args[0]);
+		
+		if (Debug.useWindowQuitExperiment) JFrameExperiment.frame.dispose();
+		System.exit(0);
+
+	}
+	
+
+	public static void evaluateNetworkOnMNIST(String path) {
+		
+		Folder fromFolder = new Folder(path);
+		
+		try {
+			FileUtils.writeStringToFile(UniqueFile.newUniqueFile(path+"\\", "test", ".txt"), "test");
+		} catch (IOException e) { e.printStackTrace(); }
+		
+		Network network = null;
+		try {
+			network = NetworkIO.recover(fromFolder);
+		} catch (SecurityException | InstantiationException
+				| IllegalAccessException | IllegalArgumentException
+				| InvocationTargetException | NoSuchMethodException
+				| IOException e) {
+			e.printStackTrace();
+		}	
+		
+		
+		DataSet dataset;
+		switch (network.netParams.dataGeneration) {
+		case MNIST:
+			dataset = new MNIST(false, -1, true);
+			break;
+		default:
+			Debug.err("dataset not supported yet: "+network.netParams.dataGeneration);
+			dataset = null;
+		}
+		
+		
+		{ // check settings of the network
+			boolean incorrectSettings = false;
+			if (network.getLastLayer().params.outputFunction != OutputFunctionType.SOFT_MAX_ACT) incorrectSettings = true;
+			try {
+				NetworkState state = new NetworkState(network, dataset.readImage(0));
+				if (!(state.getLast().outputMaps.width==1 && state.getLast().outputMaps.height==1)) incorrectSettings = true;
+			} catch (IOException e) { e.printStackTrace(); }
+			
+			
+			if (incorrectSettings)
+				Debug.err("Network doesn't have the correct settings to work as classification network!");
+		}		
+		
+		
+		double entropy = 0;
+		int nCorrect = 0;
+		
+		
+		Debug.out("Signalling and evaluating all test samples...");
+		int counter = 0;
+		for (InputSample in : dataset)
+		{
+			NetworkState state = new NetworkState(network, in);
+			network.signal(state);
+			InputSample out = state.getLast().outputMaps;
+			
+			
+			int t = in.cat;
+			
+			int p = -1;
+			double highestOutVal = Double.NEGATIVE_INFINITY;
+			
+			for (Loc l : out)
+				if (out.get(l) > highestOutVal)
+				{
+					p = l.z;
+					highestOutVal = out.get(l);
+				}
+			
+			if (t==p)
+				nCorrect++;
+			
+			entropy -= Math.log(out.get(0, 0, t));
+			
+			
+			
+			if ((counter+1) % Math.max(1, dataset.getLimit()/10) == 0)
+				Debug.out(((counter+1) *100 / dataset.getLimit())+"%");
+			counter++;
+		}
+		
+		
+		double percentage = (double)nCorrect/dataset.getLimit() *100.;
+		double logMeanTrueOut = Math.exp(-entropy/dataset.getLimit());
+		
+		String evalString = "nCorrect: \t "+nCorrect+"\r\n"+
+							"percentage: \t "+percentage+"%\r\n"+
+							"entropy: \t "+entropy+"\r\n"+
+							"logMeanTrueOut: \t "+logMeanTrueOut+"\r\n";
+		
+		try {
+			FileUtils.writeStringToFile(UniqueFile.newUniqueFile(path+"\\", "eval", ".txt"), evalString);
+		} catch (IOException e) { e.printStackTrace(); }
+		
+		Debug.out(evalString);
+		
+	
+	}
+	
+	public static void testConvAutoEncoder() {
+		
+		NetworkIO.path = Folder.newUniqueFolder(NetworkIO.basePath+"\\caeNetwork");
+		NetworkIO.path.mkdirs();
+
+		trainNetwork(ParameterConfigs.testConvAutoEncoder());
+		
+	}
+	private static void convAutoEncoderNetwork(String[] args) {
+		
+//		LayerParameters params1 = ParameterConfigs.testConvAutoEncoder();
+//		Network network = trainNetwork(params1);
+		
+		String firstLayerLocation = args[0];
+		
+		
+		Network network;
+		LayerParameters params1;
+		Folder outPath;
+		
+		int fieldSize;
+		int firstLayerPoolSize;
+		try {
+			fieldSize = Integer.parseInt(args[1]);
+			firstLayerPoolSize = Integer.parseInt(args[2]);
+		} catch (NumberFormatException e) {
+			e.printStackTrace();
+			fieldSize = firstLayerPoolSize = 0;
+			System.exit(0);
+		}
+		
+		if (firstLayerLocation.length() < 4)
+		{
+			outPath = Folder.newUniqueFolder(NetworkIO.basePath+"\\caeNetwork");
+			params1 = ParameterConfigs.convAutoEncoder();
+			
+			params1.setPoolingFieldAndStepSize(fieldSize);
+			params1.widthConvolutionField = 
+					params1.heightConvolutionField = fieldSize;
+			
+			
+			network = initializeNetwork(params1);
+			
+			NetworkIO.path = Folder.newUniqueFolder(outPath+"\\layer1_");
+			trainNetwork(network);// first layer
+		} else
+		{
+			try {
+				outPath = new Folder(firstLayerLocation);
+				
+				network = NetworkIO.recover(outPath);
+				initializeClassRandoms();
+				
+				params1 = network.getFirstLayer().params;
+				
+//				network.cnnDoubleLayers.remove(1);
+			} catch (SecurityException | InstantiationException
+					| IllegalAccessException | IllegalArgumentException
+					| InvocationTargetException | NoSuchMethodException
+					| IOException e) {
+				e.printStackTrace();
+				network = null;
+				params1 = null;
+				outPath = null;
+				Debug.exit();
+			}
+		}
+
+		
+		trainSecondLayerClassificationLayer(params1, network, outPath, firstLayerPoolSize);
+		
+		
+	}
+	public static void continueLearning(String[] args) {
+		
+		Folder fromFolder = new Folder(args[0]);
+		
+		Network network = null;
+		try {
+			network = NetworkIO.recover(fromFolder);
+		} catch (SecurityException | InstantiationException
+				| IllegalAccessException | IllegalArgumentException
+				| InvocationTargetException | NoSuchMethodException
+				| IOException e) {
+			e.printStackTrace();
+		}
+		initializeClassRandoms();
+		
+//		network.netParams.weightDecay = -1E0;
+//		network.objective = network.getObjectiveFunction(network.netParams.objective, network.netParams.etaObjectiveCorrection, network.netParams.objectiveCorrectionTerm);
+//		network.netParams.nIterations = 10000;
+//		network.netParams.etaWeights = 1E-4;
+//		network.netParams.etaBiases= 1E-4;
+//		network.netParams.nSamples = 240;
+//		network.netParams.batchSize = 120;
+//		network.netParams.staticData = true;
+		
+		try {
+		network.netParams.nIterations = Integer.parseInt(args[1]);
+		} catch (Exception e) {
+			e.printStackTrace();
+			System.exit(0);
+		}
+		
+		
+		network.initializeData();
+		
+		
+		network.getFirstLayer().locked = true;
+		
+//		NetworkIO.path = Folder.newUniqueFolder(NetworkIO.basePath+"\\simpleNetwork");
+		NetworkIO.path = Folder.newUniqueFolder(fromFolder+"\\continued");
+		trainNetwork(network);
+	}
+	public static void oneLayerClassification() {
+		
+		LayerParameters params = ParameterConfigs.classify();
+		
+		params.outputFunction = OutputFunctionType.SOFT_MAX_ACT;
+		
+		params.nFeatures = 10;
+		
+		Network network = initializeNetwork(params);
+		
+		NetworkIO.path = Folder.newUniqueFolder(NetworkIO.basePath+"\\simpleNetwork");
+		trainNetwork(network);
+		
+	}
+	public static void twoLayerClassification() {
+
+		LayerParameters params = ParameterConfigs.classify();
+		
+		params.signallingFunction = DifferentiableFunction.tanh;
+		params.outputFunction = OutputFunctionType.LINEAR;
+		
+		Network network = initializeNetwork(params);
+		
+		LayerParameters params2 = params.getNextLayerParams();
+		
+		params2.widthConvolutionField =
+				params2.heightConvolutionField = 
+				1;
+		params2.setPoolingFieldAndStepSize(1);
+		
+		params2.signallingFunction = DifferentiableFunction.linear;
+		params2.outputFunction = OutputFunctionType.SOFT_MAX_ACT;
+		
+		params2.nFeatures = 10;
+
+		network.addLayer(params2);
+		network.getLastLayer().initializeWeights();
+		
+		NetworkIO.path = Folder.newUniqueFolder(NetworkIO.basePath+"\\simpleNetwork");
+		trainNetwork(network);
+		
+	}
+	
+	
+	public static void twoUnifLayersOnwClassificationLayer() {
+		
+		Network network = null;
+		try {
+			network = NetworkIO.recover(new Folder("imageOutput\\3 layerwise learning precursor\\simpleNetwork50\\layer2_0\\"));
+		} catch (SecurityException | InstantiationException
+				| IllegalAccessException | IllegalArgumentException
+				| InvocationTargetException | NoSuchMethodException
+				| IOException e) {
+			e.printStackTrace();
+		}
+		
+		initializeClassRandoms();
+		
+		LayerParameters params1 = network.getFirstLayer().params;
+		params1.setPoolingFieldAndStepSize(2);
+		
+		LayerParameters params2 = network.getLastLayer().params;
+		params2.setPoolingFieldAndStepSize(2);
+		
+		
+		LayerParameters params3 = params2.getNextLayerParams();
+		params3.widthConvolutionField =
+				params3.heightConvolutionField =
+				params3.widthLocalInput;// - 1;
+		params3.setPoolingFieldAndStepSize(1);//(2);
+		params3.pooling = Pooling.ARG_MAX_ABS;
+
+		
+		params3.netParams.objective = Objective.CROSS_ENTROPY_CLASSIFICATION;
+		params3.outputFunction = OutputFunctionType.SOFT_MAX_ACT;
+		params3.signallingFunction = DifferentiableFunction.linear;
+		params3.nFeatures = 10;
+		
+		network.addLayer(params3);
+		network.getLastLayer().initializeWeights();
+		
+		
+		network.netParams.etaBiases = 1E-3;
+		network.netParams.etaWeights = 1E-3;
+		
+		network.netParams.alpha_momentum = .9;
+		
+		network.netParams.nIterations = 2000;
+		
+		network.netParams.nSamples = 500;
+		network.netParams.batchSize = 36;
+		network.netParams.staticData = false;
+		
+		network.netParams.weightMax = 20;
+		network.netParams.rescaleWeights = true;
+		
+		
+		network.objective = network.getObjectiveFunction(network.netParams.objective, network.netParams.etaObjectiveCorrection, network.netParams.objectiveCorrectionTerm);
+		
+		NetworkIO.path = Folder.newUniqueFolder(NetworkIO.basePath+"\\simpleNetwork");
+		trainNetwork(network); // classification layers
+		
+	}
+	
+	public static void classifyFromFirstLayerMNIST() {
+
+		Network network = null;
+		try {
+			network = NetworkIO.recover(new Folder("imageOutput\\simpleNetwork7\\layer1_0\\"));
+		} catch (SecurityException | InstantiationException
+				| IllegalAccessException | IllegalArgumentException
+				| InvocationTargetException | NoSuchMethodException
+				| IOException e) {
+			e.printStackTrace();
+		}
+		
+		initializeClassRandoms();
+		
+		LayerParameters params1 = network.getFirstLayer().params;
+		
+		
+		params1.setPoolingFieldAndStepSize(2);
+
+//		params1.signallingFunction = DifferentiableFunction.tanh;
+		
+		
+		
+		LayerParameters params3 = params1.getNextLayerParams();
+		params3.widthConvolutionField =
+				params3.heightConvolutionField =
+				params3.widthLocalInput;// /2;
+		params3.setPoolingFieldAndStepSize(1);
+		params3.pooling = Pooling.ARG_MAX_ABS;
+
+				
+		params3.signallingFunction = DifferentiableFunction.tanh;
+		params3.nFeatures = 15;
+		params3.outputFunction = OutputFunctionType.LINEAR;
+		
+//		network.setLearningMechanism(LearningMechanismType.);
+		
+		network.netParams.absMaxInitWeights = .001;
+		
+		network.addLayer(params3);
+		network.getLastLayer().initializeWeights();
+		
+		
+		LayerParameters params4 = params3.getNextLayerParams();
+		params4.widthConvolutionField =
+				params4.heightConvolutionField =
+				params4.widthLocalInput;// - 1;
+		params4.setPoolingFieldAndStepSize(1);//(2);
+		params4.pooling = Pooling.ARG_MAX_ABS;
+
+		
+		params4.netParams.objective = Objective.CROSS_ENTROPY_CLASSIFICATION;
+		params4.outputFunction = OutputFunctionType.SOFT_MAX_ACT;
+		params4.signallingFunction = DifferentiableFunction.linear;
+		params4.nFeatures = 10;
+		
+		network.addLayer(params4);
+		network.getLastLayer().initializeWeights();
+		
+		
+		network.netParams.etaBiases = 1E-2;
+		network.netParams.etaWeights = 1E-2;
+		
+		network.netParams.alpha_momentum = .9;
+		
+		network.netParams.nIterations = 2000;
+		
+		network.netParams.nSamples = 500;
+		network.netParams.batchSize = 36;
+		
+		
+		network.objective = network.getObjectiveFunction(network.netParams.objective, network.netParams.etaObjectiveCorrection, network.netParams.objectiveCorrectionTerm);
+		
+		NetworkIO.path = Folder.newUniqueFolder(NetworkIO.basePath+"\\simpleNetwork");
+		trainNetwork(network); // classification layers
+		
+	}
+	
+	public static void wholeNetworkLayerwiseMNIST() {
+		
+		LayerParameters params1 = ParameterConfigs.chaFAST();
+		
+		Network network = initializeNetwork(params1);
+		
+		Folder outPath = Folder.newUniqueFolder(NetworkIO.basePath+"\\simpleNetwork");
+		NetworkIO.path = Folder.newUniqueFolder(outPath+"\\layer1_");
+		trainNetwork(network);// first layer
+		
+		
+		
+		network.getLastLayer().locked = true;
+		
+		params1.setPoolingFieldAndStepSize(2);
+		
+
+		LayerParameters params2 = params1.getNextLayerParams();
+		params2.setPoolingFieldAndStepSize(3);
+		
+		params2.signallingFunction = DifferentiableFunction.linear;
+		
+		params2.nFeatures = 10;
+		network.addLayer(params2);
+		network.getLastLayer().initializeWeights();
+		
+		network.objective = network.getObjectiveFunction(network.netParams.objective, network.netParams.etaObjectiveCorrection, network.netParams.objectiveCorrectionTerm);
+		network.netParams.nIterations *= 3;
+
+		network.netParams.batchSize *= 2;
+		
+		network.netParams.etaBiases *= .5;
+		network.netParams.etaWeights *= .5;
+
+		NetworkIO.path = Folder.newUniqueFolder(outPath+"\\layer2_");
+		trainNetwork(network); // second layer
+		
+		network.getLastLayer().locked = true;
+		
+		
+		params2.setPoolingFieldAndStepSize(2);
+
+		params2.signallingFunction = DifferentiableFunction.tanh;
+		
+		
+		
+		LayerParameters params3 = params2.getNextLayerParams();
+		params3.widthConvolutionField =
+				params3.heightConvolutionField =
+				params3.widthLocalInput -2;
+		params3.setPoolingFieldAndStepSize(1);
+		params3.pooling = Pooling.ARG_MAX_ABS;
+
+				
+		params3.signallingFunction = DifferentiableFunction.tanh;
+		params3.nFeatures = 15;
+		params3.outputFunction = OutputFunctionType.LINEAR;
+		
+//		network.setLearningMechanism(LearningMechanismType.);
+		
+		network.netParams.absMaxInitWeights = .1;
+		
+		network.addLayer(params3);
+		network.getLastLayer().initializeWeights();
+		
+		
+		LayerParameters params4 = params3.getNextLayerParams();
+		params4.widthConvolutionField =
+				params4.heightConvolutionField =
+				3;
+		params4.setPoolingFieldAndStepSize(1);
+		params4.pooling = Pooling.ARG_MAX_ABS;
+
+		
+		params4.netParams.objective = Objective.CROSS_ENTROPY_CLASSIFICATION;
+		params4.outputFunction = OutputFunctionType.SOFT_MAX_ACT;
+		params4.signallingFunction = DifferentiableFunction.linear;
+		params4.nFeatures = 10;
+		
+		network.addLayer(params4);
+		network.getLastLayer().initializeWeights();
+		
+		
+		network.netParams.etaBiases = 1E-3;
+		network.netParams.etaWeights = 5E-3;
+		
+		network.netParams.nIterations *= 10;
+		
+		network.netParams.nSamples = 500;
+		network.netParams.batchSize = 500;
+		
+		
+		network.objective = network.getObjectiveFunction(network.netParams.objective, network.netParams.etaObjectiveCorrection, network.netParams.objectiveCorrectionTerm);
+		
+		NetworkIO.path = Folder.newUniqueFolder(outPath+"\\layer3_");
+		trainNetwork(network); // classification layers
+		
+		
+	}
+	
+	
+	
+	public static void wholeNetworkLayerwiseMNISTsingleClassificationLayer() {
+		
+		LayerParameters params1 = ParameterConfigs.chaFAST();
+		
+		Network network = initializeNetwork(params1);
+		
+		Folder outPath = Folder.newUniqueFolder(NetworkIO.basePath+"\\simpleNetwork");
+		NetworkIO.path = Folder.newUniqueFolder(outPath+"\\layer1_");
+		trainNetwork(network);// first layer
+		
+		
+		/*
+		 * FIRST LAYER /\      SECOND LAYER \/
+		 */
+		
+		
+		
+		
+		network.getLastLayer().locked = true;
+		
+		params1.setPoolingFieldAndStepSize(1);
+		
+		
+		LayerParameters params2 = params1.getNextLayerParams();
+		params2.setPoolingFieldAndStepSize(3);
+		
+		params2.signallingFunction = DifferentiableFunction.linear;
+		
+		params2.nFeatures = 10;
+		network.addLayer(params2);
+		network.getLastLayer().initializeWeights();
+		
+		network.objective = network.getObjectiveFunction(network.netParams.objective, network.netParams.etaObjectiveCorrection, network.netParams.objectiveCorrectionTerm);
+		network.netParams.nIterations *= 3;
+		
+		network.netParams.batchSize *= 2;
+		
+		network.netParams.etaBiases *= .1;
+		network.netParams.etaWeights *= .1;
+		
+		NetworkIO.path = Folder.newUniqueFolder(outPath+"\\layer2_");
+		trainNetwork(network); // second layer
+		
+		
+		
+		/*
+		 * SECOND LAYER /\      CLASSIFICATION LAYER \/
+		 */
+		
+		
+		network.getLastLayer().locked = true;
+		
+		
+		params2.setPoolingFieldAndStepSize(1);
+		
+		params2.signallingFunction = DifferentiableFunction.tanh;
+		
+		
+		
+		
+		
+		LayerParameters params3 = params2.getNextLayerParams();
+		params3.widthConvolutionField =
+				params3.heightConvolutionField =
+				params3.widthLocalInput - 1;
+		params3.setPoolingFieldAndStepSize(2);
+		params3.pooling = Pooling.ARG_MAX_ABS;
+		
+		
+		params3.netParams.objective = Objective.CROSS_ENTROPY_CLASSIFICATION;
+		params3.outputFunction = OutputFunctionType.SOFT_MAX_ACT;
+		params3.signallingFunction = DifferentiableFunction.linear;
+		params3.nFeatures = 10;
+		
+		network.addLayer(params3);
+		network.getLastLayer().initializeWeights();
+		
+		
+		network.netParams.etaBiases = 1E-3;
+		network.netParams.etaWeights = 1E-3;
+		
+		network.netParams.nIterations *= 5;
+		
+		network.netParams.nSamples = 500;
+		network.netParams.batchSize = 72;
+		network.netParams.staticData = false;
+		network.netParams.weightMax = 20;
+		
+		network.objective = network.getObjectiveFunction(network.netParams.objective, network.netParams.etaObjectiveCorrection, network.netParams.objectiveCorrectionTerm);
+		
+		NetworkIO.path = Folder.newUniqueFolder(outPath+"\\layer3_");
+		trainNetwork(network); // classification layers
+		
+		
+	}
+	
+	
+	public static void oneUnifLayerOneClassificationLayerMNISTfromWholeNetwork(String[] args) {
+		
+		String firstLayerLocation = args[0];
+		
+		
+		Network network;
+		LayerParameters params1;
+		Folder outPath;
+		
+		int fieldSize;
+		int batchSize;
+		try {
+			fieldSize = Integer.parseInt(args[1]);
+			batchSize = Integer.parseInt(args[2]);
+		} catch (NumberFormatException e) {
+			e.printStackTrace();
+			fieldSize= batchSize = 0;
+			System.exit(0);
+		}
+		
+		if (firstLayerLocation.length() < 4)
+		{
+			outPath = Folder.newUniqueFolder(NetworkIO.basePath+"\\simpleNetwork");
+			params1 = ParameterConfigs.chaFAST();
+			
+			params1.setPoolingFieldAndStepSize(fieldSize);
+			params1.widthConvolutionField = 
+					params1.heightConvolutionField = fieldSize;
+			
+			params1.netParams.batchSize = batchSize;
+			
+			network = initializeNetwork(params1);
+			
+			NetworkIO.path = Folder.newUniqueFolder(outPath+"\\layer1_");
+			trainNetwork(network);// first layer
+		} else
+		{
+			try {
+				outPath = new Folder(firstLayerLocation);
+				
+				network = NetworkIO.recover(outPath);
+				initializeClassRandoms();
+				
+				params1 = network.getFirstLayer().params;
+				params1.netParams.batchSize = batchSize;
+				
+				network.cnnDoubleLayers.remove(1);
+			} catch (SecurityException | InstantiationException
+					| IllegalAccessException | IllegalArgumentException
+					| InvocationTargetException | NoSuchMethodException
+					| IOException e) {
+				e.printStackTrace();
+				network = null;
+				params1 = null;
+				outPath = null;
+				Debug.exit();
+			}
+		}
+		
+		/*
+		 * FIRST LAYER /\      CLASSIFICATION LAYER \/
+		 */
+		
+		trainSecondLayerClassificationLayer(params1, network, outPath, 2);
+		
+	}
+	public static void oneUnifLayerOneClassificationLayerMNIST(String[] args) {
+		
+		
+		String firstLayerLocation = args[0];
+		
+		
+		Network network;
+		LayerParameters params1;
+		Folder outPath;
+		
+		int fieldSize;
+		int batchSize;
+		try {
+			fieldSize = Integer.parseInt(args[1]);
+			batchSize = Integer.parseInt(args[2]);
+		} catch (NumberFormatException e) {
+			e.printStackTrace();
+			fieldSize= batchSize = 0;
+			System.exit(0);
+		}
+		
+		if (firstLayerLocation.length() < 4)
+		{
+			outPath = Folder.newUniqueFolder(NetworkIO.basePath+"\\simpleNetwork");
+			params1 = ParameterConfigs.chaFAST();
+			
+			params1.setPoolingFieldAndStepSize(fieldSize);
+			params1.widthConvolutionField = 
+					params1.heightConvolutionField = fieldSize;
+			
+			params1.netParams.batchSize = batchSize;
+			
+			network = initializeNetwork(params1);
+			
+			NetworkIO.path = Folder.newUniqueFolder(outPath+"\\layer1_");
+			trainNetwork(network);// first layer
+		} else
+		{
+			try {
+				outPath = new Folder(firstLayerLocation);
+				
+				network = NetworkIO.recover(outPath);
+				initializeClassRandoms();
+				
+				params1 = network.getFirstLayer().params;
+				params1.netParams.batchSize = batchSize;
+				
+				network.valuesOverTime = new LinkedList<double[]>();
+				network.objectives = new LinkedList<Double> ();
+
+				if (!(network.originalObjective instanceof ChaObjective))
+					Debug.err("Expecting ChaObjective!!!");
+				
+				ChaObjective cha = (ChaObjective) network.objective;
+				network.getLastLayer().params.signallingFunction = DifferentiableFunction.linear;
+				
+				cha.transformWeights();
+				
+				cha.learnBiases();
+				
+				cha.transformNetwork(); // signalling function back to tanh
+				
+			} catch (SecurityException | InstantiationException
+					| IllegalAccessException | IllegalArgumentException
+					| InvocationTargetException | NoSuchMethodException
+					| IOException e) {
+				e.printStackTrace();
+				network = null;
+				params1 = null;
+				outPath = null;
+				Debug.exit();
+			}
+		}
+		
+		/*
+		 * FIRST LAYER /\      CLASSIFICATION LAYER \/
+		 */
+		
+		trainSecondLayerClassificationLayer(params1, network, outPath, 2);
+		
+		
+	}
+	
+	private static void trainSecondLayerClassificationLayer(String[] args) {
+		String firstLayerLocation = args[0];
+		
+		Network network;
+		LayerParameters params1;
+		Folder outPath;
+		
+		if (firstLayerLocation.length() < 4)
+		{
+			outPath = Folder.newUniqueFolder(NetworkIO.basePath+"\\simpleNetwork");
+			
+			params1 = ParameterConfigs.convAutoEncoder();
+			
+//			params1.setPoolingFieldAndStepSize(fieldSize);
+//			params1.widthConvolutionField = 
+//					params1.heightConvolutionField = fieldSize;
+//			
+//			params1.netParams.batchSize = batchSize;
+			
+			network = initializeNetwork(params1);
+			
+			NetworkIO.path = Folder.newUniqueFolder(outPath+"\\layer1_");
+			trainNetwork(network);// first layer
+		} else
+		{
+			try {
+				outPath = new Folder(firstLayerLocation);
+				network = NetworkIO.recover(outPath);
+				network.initializeData();
+				
+				Debug.out("staticData="+network.netParams.staticData  );
+				Debug.out("nSamples="+network.netParams.nSamples);
+
+			} catch (SecurityException | InstantiationException
+					| IllegalAccessException | IllegalArgumentException
+					| InvocationTargetException | NoSuchMethodException
+					| IOException e) {
+				e.printStackTrace();
+				network = null;
+				outPath = null;
+				System.exit(0);
+			}
+		}
+		initializeClassRandoms();
+		
+		trainSecondLayerClassificationLayer(network.getLastLayer().params, network, outPath, 2);
+	}
+
+	private static void trainSecondLayerClassificationLayer(LayerParameters params1, Network network, Folder outPath, int firstlayerPoolSize) {
+
+		network.getLastLayer().locked = true;
+		
+		
+		params1.setPoolingFieldAndStepSize(2);
+		
+		params1.signallingFunction = DifferentiableFunction.tanh;
+		
+		
+		
+		
+		
+		LayerParameters params2 = params1.getNextLayerParams();
+		params2.widthConvolutionField =
+				params2.heightConvolutionField =
+				params2.widthLocalInput - 1;
+		params2.setPoolingFieldAndStepSize(2);
+		params2.pooling = Pooling.ARG_MAX_ABS;
+		
+		
+		params2.netParams.objective = Objective.CROSS_ENTROPY_CLASSIFICATION;
+		params2.outputFunction = OutputFunctionType.SOFT_MAX_ACT;
+		params2.signallingFunction = DifferentiableFunction.linear;
+		params2.nFeatures = 10;
+		
+		network.addLayer(params2);
+		network.getLastLayer().initializeWeights();
+		
+		
+		network.netParams.etaBiases = 1E-3;
+		network.netParams.etaWeights = 1E-3;
+		
+		network.netParams.nIterations = 20000;
+		
+//		network.netParams.nSamples = 500;
+//		network.netParams.staticData = false;
+		network.netParams.batchSize = 72;
+//		network.netParams.weightMax = 20;
+		
+		network.objective = network.getObjectiveFunction(network.netParams.objective, network.netParams.etaObjectiveCorrection, network.netParams.objectiveCorrectionTerm);
+		
+		NetworkIO.path = Folder.newUniqueFolder(outPath+"\\layerClass_");
+		trainNetwork(network); // classification layers
+		
+		
+		for (CnnDoubleLayer layer : network.cnnDoubleLayers)
+			layer.locked = false;
+		
+		
+		NetworkIO.path = Folder.newUniqueFolder(outPath+"\\fully_learned_");
+		trainNetwork(network); // classification layers
+	}
+	
+	public static void threeConnectedNetworks(String[] args) {
+		
+		
+		LayerParameters params = ParameterConfigs.chaFAST();
+		
+		params.netParams.nIterations = 1000;
+		params.netParams.nSamples = params.netParams.batchSize;
+		params.nFeatures = 4;
+		
+		Network network = initializeNetwork(params);
+
+		
+		NetworkIO.path = Folder.newUniqueFolder(NetworkIO.basePath+"\\simpleNetwork");
+		trainNetwork(network);
+		
+		
+		
+		
+		DataSet inDataSet = (DataSet) network.dataGenerator;
+		NetworkState exampleState = new NetworkState(network, new InputSample(-1, inDataSet.getWidth(), inDataSet.getHeight(), inDataSet.getDepth(), -1));
+		
+//		params.getNextLayerParams()
+		LayerParameters params2 = params.clone();
+//		params2.netParams = params.netParams.clone();
+		
+		params2.nInputFeatures = params.nFeatures;
+		params2.netParams.widthInput = exampleState.getLast().outputMaps.width;
+		params2.netParams.heightInput = exampleState.getLast().outputMaps.height;
+		params2.widthLocalInput = exampleState.getLast().outputMaps.width;
+		params2.heightLocalInput = exampleState.getLast().outputMaps.height;
+		params2.widthConvolutionField =
+				params2.heightConvolutionField = 
+				params2.widthPoolingField =
+				params2.heightPoolingField =
+				3;
+		
+		Network network2 = initializeNetwork(params2);
+		network2.dataGenerator = new DataFromNetwork(network, true, -1);
+		
+		
+		NetworkIO.path = Folder.newUniqueFolder(NetworkIO.path+"\\Layer2");
+		trainNetwork(network2);
+		
+		
+		
+		Network network3 = initializeClassificationNetwork();
+		network2.dataGenerator = new DataFromNetwork(network2, true, -1);
+		
+		
+		NetworkIO.path = Folder.newUniqueFolder(NetworkIO.path+"\\Layer3");
+		trainNetwork(network3);
+		
+		
+		
+	}
+
+	public static void mainClassify() {
+		
+
+		Network network = initializeClassificationNetwork();
+		
+
+		
+		trainNetwork(network);
+		
+		
+		
+		
+	}
+	
+
+
+	public static void chaSequential() {
+		/*
+		 * process time = 752971
+		 * 
+		 * vs simultaneous (= 306915)
+		 * 
+		 */
+		
+		
+		LayerParameters params = ParameterConfigs.cha();
+		
+		
+		
+		Network network = initializeNetwork(params);
+		
+		
+		
+		
+		
+		for (int f = 0 ; f < params.nFeatures; f++)
+		{
+			for (CnnDoubleLayer cnnDoubleLayer : network.cnnDoubleLayers)
+				network.learningMechanism.resetState(cnnDoubleLayer);
+			network.batchLearnCHA(params.netParams.nSamples, f);
+			try {
+				NetworkIO.outputWeightImages(network, Folder.newUniqueFolder(NetworkIO.path + "\\intermediateOutput feat "+f), "", Static.ColoringType.TYPE_COLOR_BEYOND_LIMITS);
+			} catch (IOException e) { e.printStackTrace(); }
+		}
+		
+		if (network.originalObjective instanceof ChaObjective)
+		{
+			ChaObjective cha = (ChaObjective) network.originalObjective;
+
+			cha.transformWeights();
+			cha.transformNetwork();
+			
+			cha.learnBiases();
+		}
+		
+		
+		// check constraints
+		network.outputConstraints(network.getLastLayer());
+		
+		
+		
+		try {
+			NetworkIO.path = Folder.newUniqueFolder(NetworkIO.basePath+"\\simpleNetwork");
+			NetworkIO.document(network);
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
+		
+		
+//		ForThreader.threadPool.shutdown();
+	}
+	public static void mainSingleLayer() {
+		/*
+		 * process time = 306915
+		 * vs sequential (= 752971)
+		 */
+		
+//		LayerParameters params = ParameterConfigs.debug();
+		
+		LayerParameters params = ParameterConfigs.cha();
+		
+//		LayerParameters params = ParameterConfigs.gha();
+//		LayerParameters params = ParameterConfigs.classify();
+		
+		
+		
+		Network network = initializeNetwork(params);
+
+//		loadFromFile();
+		
+		
+//		network.netParams.nIterations = 1;
+//		Debug.noUpdate = true;
+		trainNetwork(network);
+		
+		
+		// check constraints
+		network.outputConstraints(network.getLastLayer());
+
+		
+//		ForThreader.threadPool.shutdown();
+	}
+
+
+	private static void loadFromFileAndConvertData() {
+		String[] paths = new String[]{
+//				"final tests\\MNIST\\config0\\network0" ,
+//				"final tests\\MNIST\\config0\\network1" ,
+//				"final tests\\MNIST\\config0\\network2" ,
+//				"final tests\\MNIST\\config0\\network3" ,
+//				"final tests\\MNIST\\config0\\network4" ,
+//				
+//				"final tests\\NORB1\\config0\\network0" ,
+//				"final tests\\NORB1\\config0\\network1" ,
+//				"final tests\\NORB1\\config0\\network2" ,
+//				"final tests\\NORB2\\config0\\network0" ,
+//				"final tests\\NORB2\\config0\\network1" ,
+				"final tests\\NORB2\\config0\\network2" ,
+				
+				"final tests\\CIFAR1\\config0\\network0" ,
+				"final tests\\CIFAR1\\config0\\network1" ,
+				"final tests\\CIFAR2\\config0\\network0" ,
+				"final tests\\CIFAR2\\config0\\network1" ,
+				"final tests\\CIFAR2\\config0\\network2" 
+		};
+		Network network = null;
+			try {
+				for (String path : paths)
+				{
+					Debug.out("converting "+path);
+					
+					NetworkIO.path = new Folder(path);
+					network = NetworkIO.recover(NetworkIO.path);
+					
+					LayerParameters params = network.getLastLayer().params; 
+					params.widthPoolingField 		= params.widthPoolingStep
+					= params.heightPoolingField		= params.heightPoolingStep
+												= 2;
+					
+					NetworkIO.convertData(network, "2x2");
+				}
+			} catch (SecurityException | InstantiationException
+					| IllegalAccessException | IllegalArgumentException
+					| InvocationTargetException | NoSuchMethodException
+					| IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+	}
+
+	public static void testSettings(CombisParameterConfigs paramConfigs, int nReruns) {
+		
+		StringBuilder errors = new StringBuilder();
+		
+		Debug.documentProgram = false;
+		
+		Folder outputPath = Folder.newUniqueFolder("imageOutput\\run");
+		try {
+			FileUtils.writeStringToFile(new File(outputPath+"\\paramConfigs.txt"), paramConfigs+"");
+			FileUtils.writeStringToFile(new File(outputPath+"\\commonParams.txt"), paramConfigs.getSeparateParams(true, paramConfigs.getFirstParams()));
+		} catch (IOException e) { e.printStackTrace(); }
+		
+		if (Debug.documentProgram)
+			try {
+				Debug.out("Documenting program java files...");
+				NetworkIO.documentProgram(new Folder(outputPath+"\\program\\"));
+				Debug.out("Done.");
+			} catch (IOException e) { e.printStackTrace(); }
+		
+		for (LayerParameters params : paramConfigs) {
+			NetworkIO.basePath = Folder.newUniqueFolder(outputPath+"\\config");
+			try {
+				FileUtils.writeStringToFile(new File(NetworkIO.basePath+"\\params.txt"), paramConfigs.getSeparateParams(false, params));
+			} catch (IOException e) { e.printStackTrace(); }
+			
+			
+			try {
+				
+				
+				testSingleSetting(params, nReruns);
+				
+				
+				
+			} catch (Exception e) {
+				e.printStackTrace();
+				errors.append("for param setting "+NetworkIO.basePath);
+				errors.append(StringUtils.join(e.getStackTrace(), "\r\n"));
+				errors.append("\r\n\r\n\r\n\r\n\r\n");
+			}
+		}
+	}
+	public static void testSingleSetting(LayerParameters params, int nRestarts) {
+
+		for (int x = 0; x<nRestarts; x++) 
+			try {
+				NetworkIO.path = Folder.newUniqueFolder(""+NetworkIO.basePath+"\\network");
+				trainNetwork(params.clone());
+//		Network network = NetworkIO.recover(new Folder("imageOutput\\simpleNetwork53"));
+//		NetworkIO.path = Folder.newUniqueFolder("imageOutput\\simpleNetwork53_rec");
+//		NetworkIO.document(network);
+//        Debug.out("Documented to "+NetworkIO.path);
+
+			} catch(Exception e) { e.printStackTrace(); }
+//			if (!QuitExperiment.keepRunning) break;
+//		}
+//		
+//		retrainNetwork();
+//		trainInputImages();
+		
+	}
+	
+	static void initializeClassRandoms() { initializeClassRandoms(new Random().nextInt(1000)); }
+	static void initializeClassRandoms(int seed) {
+		Network.output("Seed: "+seed);
+		Random staticRandom = new Random(seed);
+		
+		GenerateData.random = new Random(staticRandom.nextInt());
+		Network.random = new Random(staticRandom.nextInt());
+		NetworkIO.random = new Random(staticRandom.nextInt());
+		CnnDoubleLayer.random = new Random(staticRandom.nextInt());
+		DataSet.random = new Random(staticRandom.nextInt());
+		
+	}
+	
+
+	public static Network initializeNetwork(LayerParameters params) {
+		if (params.netParams.batchSize > params.netParams.nSamples) 
+			params.netParams.batchSize = params.netParams.nSamples; 
+		
+		
+//		if (!params.netParams.staticData) 
+//			params.netParams.nSamples = params.netParams.nIterations*params.netParams.batchSize;
+
+		Network network = new Network(params);
+
+		network.initializeData(); 
+		network.initializeWeights();
+
+		if (network.originalObjective instanceof ConvAutoEncoder)
+			((ConvAutoEncoder) network.originalObjective).construct(network.getLastLayer());
+
+		if (Debug.checkHeap) {
+			Debug.out("Heap space available: "+ (Runtime.getRuntime().freeMemory()/1048576) +" mb ..");
+			Debug.out("Max heap space: "+ (Runtime.getRuntime().maxMemory()/1048576) +" mb ..");
+		}
+		
+		return network;
+	}
+	private static Network initializeClassificationNetwork() {
+		LayerParameters params = ParameterConfigs.classify();
+		params.outputFunction = OutputFunctionType.LINEAR;
+		
+		
+		if (params.netParams.batchSize > params.netParams.nSamples) 
+			params.netParams.batchSize = params.netParams.nSamples; 
+		
+		
+//		if (!params.netParams.staticData) 
+//			params.netParams.nSamples = params.netParams.nIterations*params.netParams.batchSize;
+
+		params.signallingFunction = DifferentiableFunction.linear;
+		params.outputFunction = OutputFunctionType. SOFT_MAX_ACT; 
+		params.nFeatures = 10; // number of classes!
+
+		Network network = new Network(params);
+
+		
+		
+		network.initializeData(); 
+		network.initializeWeights();
+		
+		
+		return network;
+	}
+
+	private static Network initializeTwoLayerClassificationNetwork() {
+		LayerParameters params = ParameterConfigs.classify();
+		params.outputFunction = OutputFunctionType.LINEAR;
+		
+		
+		if (params.netParams.batchSize > params.netParams.nSamples) 
+			params.netParams.batchSize = params.netParams.nSamples; 
+		
+		
+//		if (!params.netParams.staticData) 
+//			params.netParams.nSamples = params.netParams.nIterations*params.netParams.batchSize;
+		
+		Network network = new Network(params);
+		
+		
+		
+		LayerParameters l2params = params.getNextLayerParams();
+		l2params.widthConvolutionField = l2params.heightConvolutionField = 1;
+		l2params.outputFunction = OutputFunctionType. SOFT_MAX_ACT; 
+		//     CrossEntropyCategorizationObjective expects softmax output function!!
+		
+		l2params.nFeatures = 10; // number of classes!
+		l2params.signallingFunction = DifferentiableFunction.linear;
+		
+		network.addLayer(l2params);
+		
+		network.initializeData(); 
+		network.initializeWeights();
+		
+		
+		
+		
+		return network;
+	}
+	
+	
+	public static Network trainNetwork(LayerParameters params) {
+		Network network = initializeNetwork(params);
+		trainNetwork(network);
+		return network;
+	}
+		
+	public static void trainNetwork(Network network ) {
+		
+
+		Network.output("\r\n\r\n\r\nStarting learning process...\r\n\r\n\r\n");
+		network.batchLearn();
+		
+		
+		
+		if (Debug.trainingPhaseOnly) System.exit(0);
+		
+		if (Debug.useWindowQuitExperiment) JFrameExperiment.keepRunning = true;
+		Network.output("============================\r\n============================\r");
+		Network.output("\r\n\r\n\r\nStarting output/analysis process...\r\n\r\n\r\n");
+	
+		
+		// check weight derivative
+		if (Debug.checkDerivatives)
+			Analysis.checkDeriatives(network);
+
+		Network.output("============================\r\n============================\r");
+		Network.output("\r\n\r\n\r\nAnalysis complete! Starting save...\r\n\r\n\r\n");
+		
+		Network.output(network.toString());
+		
+		try {
+			NetworkIO.document(network);
+		} catch (IOException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
+		Network.output("============================\r\n============================\r");
+		Network.output("\r\n\r\n\r\nSave complete! \r\n\r\n\r\n");
+
+	}
+	
+	
+}

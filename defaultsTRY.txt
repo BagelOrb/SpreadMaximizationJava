@@ -1,0 +1,1 @@
+{"MNIST.path":"../Thesis/Images//MNIST//","NORB.path":"..\\Thesis\\Images\\NORB","CIFAR.path":"../Thesis/Images/cifar-10-binary//"}

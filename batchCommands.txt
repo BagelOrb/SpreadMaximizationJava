@@ -1,0 +1,2 @@
+java -jar continueLearningWholeNetwork.jar D:\Thesis test results\thesisSimple\imageOutput\lenetChasmNetwork0\layer2_0\layerClass_unlocked_3\backup2 7344
+java -jar continueLearningWholeNetwork.jar D:\Thesis test results\thesisSimple\imageOutput\lenetChasmNetwork0\layer2_0\layerClass_unlocked_2\backup2 7161
